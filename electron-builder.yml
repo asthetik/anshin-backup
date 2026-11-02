@@ -13,21 +13,33 @@ files:
 
 asar: true
 
+# 架构在 target 级声明:WiX 不支持 arm64,msi 强行 arm64 会产出 x64 模板 +
+# arm64 载荷的杂交包,且与 x64 msi 同 UpgradeCode 会互相静默卸载,故 msi 只出 x64
 mac:
   category: public.app-category.utilities
   icon: build/icon.png
+  artifactName: Anshin-${version}-macos-${arch}.${ext}
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
 
 win:
   icon: build/icon.png
+  artifactName: Anshin-${version}-windows-${arch}.${ext}
   target:
-    - nsis
+    - target: nsis
+      arch: [x64, arm64]
+    - target: msi
+      arch: [x64]
 
 linux:
   icon: build/icon.png
   category: Utility
+  artifactName: Anshin-${version}-linux-${arch}.${ext}
   target:
-    - AppImage
-    - deb
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64, arm64]

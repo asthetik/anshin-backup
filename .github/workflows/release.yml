@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # 先占住 draft:三个平台 job 并行上传时只会指向同一个 release,
+  # 不会竞态创建多个同名 draft 把资产拆散
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+      - name: Ensure a draft release exists
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GitHub 允许同名 tag 的多个 draft 并存,create 不会因已存在而失败;
+          # 必须先 view 确认,否则这里会亲手造出第二个 draft 把资产拆散
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" \
+              --target "$(git rev-parse HEAD)"
+          fi
+
+  dist:
+    name: dist (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec electron-vite build
+      # 只打包,上传自己控制:electron-builder 强制生成的 blockmap/latest*.yml
+      # 留在 runner 上随机器销毁,永远不会出现在 release 资产里
+      - run: pnpm exec electron-builder --publish never
+      - name: Upload installers to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          # exe 按架构后缀挑:nsis 配双架构时 electron-builder 会额外产出一个
+          # 无架构名的合并安装器(双份载荷),不符合统一命名,留在 runner 上不上传
+          gh release upload "$GITHUB_REF_NAME" \
+            release/*.dmg release/*.zip release/*-x64.exe release/*-arm64.exe \
+            release/*.msi release/*.AppImage release/*.deb \
+            --clobber
+      - name: Upload artifacts to the workflow run
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: anshin-dist-${{ matrix.os }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*-x64.exe
+            release/*-arm64.exe
+            release/*.msi
+            release/*.AppImage
+            release/*.deb

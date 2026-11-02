@@ -6,10 +6,11 @@
   "type": "module",
   "main": "./out/main/index.js",
   "license": "MIT",
-  "author": "asthetik",
+  "author": "asthetik <asthetik.sun@outlook.com>",
   "engines": {
     "node": ">=22.22"
   },
+  "packageManager": "pnpm@11.21.0",
   "homepage": "https://github.com/asthetik/anshin-backup",
   "repository": {
     "type": "git",

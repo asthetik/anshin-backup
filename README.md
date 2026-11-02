@@ -32,6 +32,12 @@ Anshin keeps an up-to-date copy of the files you care about. Add the files you w
 
 Download the latest build from [Releases](../../releases). Builds are unsigned for now, so macOS Gatekeeper and Windows SmartScreen may warn when you first open the app. If no release is available yet, build from source below.
 
+On macOS, if you see "Anshin.app is damaged and can't be opened", the download is not actually damaged — macOS is just blocking the unsigned app. Drag Anshin into Applications, then run in Terminal:
+
+```bash
+xattr -cr "/Applications/Anshin.app"
+```
+
 ## Status
 
 v0.1 watches and copies individual files. Watching folders, version history, and restore are next.

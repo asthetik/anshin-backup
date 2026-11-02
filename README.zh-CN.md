@@ -32,6 +32,12 @@ Anshin 会为你选择的文件保留一份最新的副本。把要保护的文�
 
 到 [Releases](../../releases) 下载最新版本。安装包目前未签名，macOS Gatekeeper 和 Windows SmartScreen 首次打开时可能会提示。如果还没有发布版本，可以从下面的源码构建。
 
+macOS 上如果提示「Anshin.app is damaged and can't be opened」（已损坏，无法打开），不要担心，这不是安装包损坏，只是系统拦截了未签名应用。把 App 拖到「应用程序」后，打开终端执行：
+
+```bash
+xattr -cr "/Applications/Anshin.app"
+```
+
 ## 状态
 
 v0.1 目前按文件监听和复制，可以添加多个文件。文件夹监听、版本历史和还原会在后续版本加入。
