@@ -8,7 +8,11 @@
 
 <p align="center"><strong>给重要的文件，留一份安心的备份。</strong></p>
 
-<p align="center"><a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3f6f5e.svg"></a></p>
+<p align="center">
+  <a href="https://github.com/asthetik/anshin-backup/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/asthetik/anshin-backup/ci.yml?branch=main&label=build"></a>
+  <a href="https://github.com/asthetik/anshin-backup/releases"><img alt="Release" src="https://img.shields.io/github/v/release/asthetik/anshin-backup?color=3f6f5e&label=release"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3f6f5e.svg"></a>
+</p>
 
 Anshin 会为你选择的文件保留一份最新的副本。把要保护的文件加进来，再给每个副本选好位置，之后文件一有变化，它就在后台自动更新副本。
 

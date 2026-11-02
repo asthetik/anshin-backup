@@ -8,7 +8,11 @@ English | [简体中文](README.zh-CN.md)
 
 <p align="center"><strong>Peace of mind for the files you care about.</strong></p>
 
-<p align="center"><a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3f6f5e.svg"></a></p>
+<p align="center">
+  <a href="https://github.com/asthetik/anshin-backup/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/asthetik/anshin-backup/ci.yml?branch=main&label=build"></a>
+  <a href="https://github.com/asthetik/anshin-backup/releases"><img alt="Release" src="https://img.shields.io/github/v/release/asthetik/anshin-backup?color=3f6f5e&label=release"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3f6f5e.svg"></a>
+</p>
 
 Anshin keeps an up-to-date copy of the files you care about. Add the files you want to protect and choose where each copy should live. Whenever one of them changes, Anshin updates its copy in the background.
 
