@@ -1,0 +1,50 @@
+{
+  "name": "anshin-backup",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Quiet file monitoring & effortless backup for everyone.",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "license": "MIT",
+  "author": "asthetik",
+  "engines": {
+    "node": ">=22.22"
+  },
+  "homepage": "https://github.com/asthetik/anshin-backup",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/asthetik/anshin-backup.git"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "icons": "node scripts/gen-icons.mjs",
+    "dist": "electron-vite build && electron-builder",
+    "dist:dir": "electron-vite build && electron-builder --dir",
+    "preview": "node scripts/preview.mjs"
+  },
+  "dependencies": {
+    "chokidar": "6.0.0",
+    "electron-log": "5.4.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0",
+    "electron-vite": "6.0.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}
