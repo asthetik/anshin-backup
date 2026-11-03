@@ -1,6 +1,17 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, open, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
+
+export async function sha256File(path: string): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    const stream = createReadStream(path)
+    stream.on('data', (chunk) => hash.update(chunk))
+    stream.on('error', reject)
+    stream.on('end', () => resolve(hash.digest('hex')))
+  })
+}
 
 // 先写临时文件再 rename，避免备份到一半留下残缺的目标文件
 export async function copyFileAtomic(sourcePath: string, destination: string): Promise<void> {

@@ -28,6 +28,7 @@ export interface PickedSource {
 /** 一次手动备份的结果；失败的条目已在对应的 Source.lastError 里带原因 */
 export interface BackupResult {
   succeeded: string[]
+  skipped: string[]
   failed: string[]
 }
 

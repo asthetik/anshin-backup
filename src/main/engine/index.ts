@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import type { BackupResult, EngineEvent, Source } from '../../shared/types'
-import { copyFileAtomic } from './copier'
-import { AnshinDatabase } from './db'
+import { copyFileAtomic, sha256File } from './copier'
+import { AnshinDatabase, type ChangeRecord } from './db'
 import { EngineError } from './errors'
 import { type WatchHandle, watchSource } from './watcher'
 
@@ -16,10 +16,12 @@ export interface EngineOptions {
 
 const DEFAULT_DEBOUNCE_MS = 1000
 
+type BackupOutcome = 'copied' | 'skipped'
+
 export class BackupEngine {
   private readonly db: AnshinDatabase
   private readonly watchers = new Map<string, WatchHandle>()
-  private readonly inFlight = new Map<string, Promise<void>>()
+  private readonly inFlight = new Map<string, Promise<BackupOutcome>>()
   private readonly dirty = new Set<string>()
   private readonly debounceMs: number
   private readonly watchEnabled: boolean
@@ -153,6 +155,7 @@ export class BackupEngine {
 
   async backupMany(sourceIds: string[]): Promise<BackupResult> {
     const succeeded: string[] = []
+    const skipped: string[] = []
     const failed: string[] = []
 
     for (const sourceId of sourceIds) {
@@ -167,15 +170,16 @@ export class BackupEngine {
       }
 
       try {
-        await this.runBackup(sourceId)
-        succeeded.push(sourceId)
+        const outcome = await this.runBackup(sourceId)
+        if (outcome === 'skipped') skipped.push(sourceId)
+        else succeeded.push(sourceId)
       } catch {
         // 失败原因已经写进 Source.lastError，并通过 source-updated 推给界面
         failed.push(sourceId)
       }
     }
 
-    return { succeeded, failed }
+    return { succeeded, skipped, failed }
   }
 
   async removeMany(sourceIds: string[]): Promise<void> {
@@ -306,8 +310,8 @@ export class BackupEngine {
     await handle?.close()
   }
 
-  private runBackup(sourceId: string): Promise<void> {
-    if (this.disposed) return Promise.resolve()
+  private runBackup(sourceId: string): Promise<BackupOutcome> {
+    if (this.disposed) return Promise.resolve('skipped')
     const running = this.inFlight.get(sourceId)
     if (running) {
       this.dirty.add(sourceId)
@@ -327,15 +331,37 @@ export class BackupEngine {
     return task
   }
 
-  private async executeBackup(sourceId: string): Promise<void> {
+  private async executeBackup(sourceId: string): Promise<BackupOutcome> {
     const source = this.db.getSource(sourceId)
-    if (!source) return
+    if (!source) return 'skipped'
 
     try {
-      await copyFileAtomic(source.path, source.destination)
-      this.db.markSourceBackup(sourceId, Date.now())
-      const updated = this.db.getSource(sourceId)
-      if (updated) this.emit({ type: 'source-updated', source: updated })
+      const info = await stat(source.path)
+      // 源被换成目录/FIFO 等非普通文件时立刻报错，否则哈希读取会阻塞或行为未定义
+      if (!info.isFile()) throw new EngineError('source-not-file', source.path)
+      const destInfo = await stat(source.destination).catch(() => null)
+      const record = this.db.getChangeRecord(sourceId)
+      const fresh: ChangeRecord = { size: info.size, mtimeMs: info.mtimeMs, hash: null }
+
+      // 副本在且大小一致才谈得上"无变更"：stat 快路径之后用内容哈希兜底，
+      // 覆盖"文件被摸过但内容没变"的情况
+      if (destInfo?.isFile() && record && destInfo.size === info.size) {
+        if (record.size === info.size && record.mtimeMs === info.mtimeMs) {
+          this.markVerified(sourceId, source, { ...fresh, hash: record.hash })
+          return 'skipped'
+        }
+        const hash = await sha256File(source.path)
+        if (record.hash !== null && hash === record.hash) {
+          this.markVerified(sourceId, source, { ...fresh, hash: record.hash })
+          return 'skipped'
+        }
+        await this.copyAndRecord(sourceId, source, fresh, hash)
+        return 'copied'
+      }
+
+      const hash = await sha256File(source.path)
+      await this.copyAndRecord(sourceId, source, fresh, hash)
+      return 'copied'
     } catch (error) {
       const errno = (error as NodeJS.ErrnoException).code
       // 稳定的 errno 前缀让界面能把常见失败翻成人话，其余保留原文
@@ -350,6 +376,34 @@ export class BackupEngine {
       if (updated) this.emit({ type: 'source-updated', source: updated })
       throw error
     }
+  }
+
+  /**
+   * 确认"源未变"：按源的 stat/哈希足迹判定，不读副本内容，故无法发现
+   * 副本被同大小篡改这类损坏；此路径只刷新记录、清过时报错，不改 lastBackupAt
+   */
+  private markVerified(sourceId: string, source: Source, record: ChangeRecord): void {
+    this.db.markSourceVerified(sourceId, record)
+    if (source.lastError !== null) this.emitUpdated(sourceId)
+  }
+
+  /** 复制后复查源 stat：采样与落盘之间源被改写时记录的哈希不可信，置空强制下次重拷 */
+  private async copyAndRecord(
+    sourceId: string,
+    source: Source,
+    before: { size: number; mtimeMs: number },
+    hash: string,
+  ): Promise<void> {
+    await copyFileAtomic(source.path, source.destination)
+    const after = await stat(source.path).catch(() => null)
+    const settled = after !== null && after.size === before.size && after.mtimeMs === before.mtimeMs
+    this.db.markSourceBackup(sourceId, Date.now(), { ...before, hash: settled ? hash : null })
+    this.emitUpdated(sourceId)
+  }
+
+  private emitUpdated(sourceId: string): void {
+    const updated = this.db.getSource(sourceId)
+    if (updated) this.emit({ type: 'source-updated', source: updated })
   }
 
   private emit(event: EngineEvent): void {
