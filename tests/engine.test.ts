@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BackupEngine } from '../src/main/engine'
 
@@ -229,7 +230,8 @@ describe('BackupEngine', () => {
     await rm(gone)
     const result = await engine?.backupMany([missing?.id ?? '', ok?.id ?? ''])
 
-    expect(result?.succeeded).toEqual([ok?.id])
+    expect(result?.succeeded).toEqual([])
+    expect(result?.skipped).toEqual([ok?.id])
     expect(result?.failed).toEqual([missing?.id])
     expect(await readFile(goodTarget, 'utf8')).toBe('good')
     expect(engine?.listSources().find((item) => item.id === missing?.id)?.lastError).toBeTruthy()
@@ -429,5 +431,181 @@ describe('BackupEngine', () => {
     await rm(source)
     await writeFile(source, 'v3')
     await waitUntil(async () => (await readFile(target, 'utf8')) === 'v3')
+  })
+
+  it('leaves the backup untouched when nothing changed', async () => {
+    const { workspace } = await setup()
+    const source = join(workspace, 'same.txt')
+    const target = join(workspace, 'backup', 'same.txt')
+    await writeFile(source, 'v1')
+
+    const added = await engine?.addSource(source, target)
+    const beforeTarget = await stat(target)
+    const before = engine?.getSource(added?.id ?? '')
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await engine?.backupNow(added?.id ?? '')
+
+    expect((await stat(target)).mtimeMs).toBe(beforeTarget.mtimeMs)
+    expect(engine?.getSource(added?.id ?? '')?.lastBackupAt).toBe(before?.lastBackupAt)
+  })
+
+  it('reports skipped files in a batch when only some changed', async () => {
+    const { workspace } = await setup()
+    const first = join(workspace, 'one.txt')
+    const second = join(workspace, 'two.txt')
+    const firstTarget = join(workspace, 'backup', 'one.txt')
+    const secondTarget = join(workspace, 'backup', 'two.txt')
+    await writeFile(first, 'one')
+    await writeFile(second, 'two')
+
+    const a = await engine?.addSource(first, firstTarget)
+    const b = await engine?.addSource(second, secondTarget)
+    await writeFile(first, 'one updated')
+
+    const result = await engine?.backupMany([a?.id ?? '', b?.id ?? ''])
+    expect(result?.succeeded).toEqual([a?.id])
+    expect(result?.skipped).toEqual([b?.id])
+    expect(result?.failed).toEqual([])
+
+    const again = await engine?.backupAll()
+    expect(again?.succeeded).toEqual([])
+    expect([...(again?.skipped ?? [])].sort()).toEqual([a?.id, b?.id].sort())
+  })
+
+  it('skips the copy when the file was touched but the content is identical', async () => {
+    const { workspace } = await setup()
+    const source = join(workspace, 'touched.txt')
+    const target = join(workspace, 'backup', 'touched.txt')
+    await writeFile(source, 'v1')
+
+    const added = await engine?.addSource(source, target)
+    const beforeTarget = await stat(target)
+    const before = engine?.getSource(added?.id ?? '')
+
+    const future = new Date(Date.now() + 5000)
+    await utimes(source, future, future)
+    const result = await engine?.backupMany([added?.id ?? ''])
+
+    expect(result?.skipped).toEqual([added?.id])
+    expect((await stat(target)).mtimeMs).toBe(beforeTarget.mtimeMs)
+    expect(engine?.getSource(added?.id ?? '')?.lastBackupAt).toBe(before?.lastBackupAt)
+  })
+
+  it('recopies when the destination disappears', async () => {
+    const { workspace } = await setup()
+    const source = join(workspace, 'gone-target.txt')
+    const target = join(workspace, 'backup', 'gone-target.txt')
+    await writeFile(source, 'v1')
+
+    const added = await engine?.addSource(source, target)
+    await rm(target)
+
+    const result = await engine?.backupMany([added?.id ?? ''])
+    expect(result?.succeeded).toEqual([added?.id])
+    expect(result?.skipped).toEqual([])
+    expect(await readFile(target, 'utf8')).toBe('v1')
+  })
+
+  it('recopies when the destination size no longer matches the source', async () => {
+    const { workspace } = await setup()
+    const source = join(workspace, 'drifted.txt')
+    const target = join(workspace, 'backup', 'drifted.txt')
+    await writeFile(source, 'v1')
+
+    const added = await engine?.addSource(source, target)
+    await writeFile(target, 'tampered contents')
+
+    const result = await engine?.backupMany([added?.id ?? ''])
+    expect(result?.succeeded).toEqual([added?.id])
+    expect(await readFile(target, 'utf8')).toBe('v1')
+  })
+
+  it('clears a stale error when a skip confirms the copy matches', async () => {
+    const { workspace } = await setup()
+    const source = join(workspace, 'recover.txt')
+    const target = join(workspace, 'backup', 'recover.txt')
+    await writeFile(source, 'v1')
+
+    const added = await engine?.addSource(source, target)
+    const before = engine?.getSource(added?.id ?? '')
+
+    await rm(source)
+    await engine?.backupNow(added?.id ?? '').catch(() => undefined)
+    expect(engine?.getSource(added?.id ?? '')?.lastError).toBeTruthy()
+
+    await writeFile(source, 'v1')
+    const result = await engine?.backupMany([added?.id ?? ''])
+
+    expect(result?.skipped).toEqual([added?.id])
+    const after = engine?.getSource(added?.id ?? '')
+    expect(after?.lastError).toBeNull()
+    expect(after?.lastBackupAt).toBe(before?.lastBackupAt)
+  })
+
+  it('copies to a new destination even when a same-size file already exists there', async () => {
+    const { workspace } = await setup()
+    const source = join(workspace, 'move.txt')
+    const first = join(workspace, 'a', 'move.txt')
+    const second = join(workspace, 'b', 'move.txt')
+    await writeFile(source, 'v1')
+
+    const added = await engine?.addSource(source, first)
+    // 新位置已存在一个同大小的无关文件（保存对话框里用户确认覆盖）
+    await mkdir(join(workspace, 'b'), { recursive: true })
+    await writeFile(second, 'zz')
+
+    await engine?.setDestination(added?.id ?? '', second)
+
+    expect(await readFile(second, 'utf8')).toBe('v1')
+  })
+
+  it('copies when a removed source is re-added to a destination with a same-size file', async () => {
+    const { workspace } = await setup()
+    const source = join(workspace, 'again.txt')
+    const first = join(workspace, 'a', 'again.txt')
+    const second = join(workspace, 'b', 'again.txt')
+    await writeFile(source, 'v1')
+
+    const added = await engine?.addSource(source, first)
+    await engine?.removeSource(added?.id ?? '')
+    await mkdir(join(workspace, 'b'), { recursive: true })
+    await writeFile(second, 'zz')
+
+    await engine?.addSource(source, second)
+
+    expect(await readFile(second, 'utf8')).toBe('v1')
+  })
+
+  it('migrates an older database without change records and still backs up', async () => {
+    workspace = await mkdtemp(join(tmpdir(), 'anshin-test-'))
+    const source = join(workspace, 'legacy.txt')
+    const target = join(workspace, 'backup', 'legacy.txt')
+    await writeFile(source, 'legacy')
+
+    const dbPath = join(workspace, 'anshin.db')
+    const raw = new DatabaseSync(dbPath)
+    raw.exec(`
+      CREATE TABLE sources (
+        id TEXT PRIMARY KEY,
+        path TEXT NOT NULL UNIQUE,
+        destination TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_backup_at INTEGER,
+        last_error TEXT,
+        deleted_at INTEGER
+      );
+    `)
+    raw
+      .prepare('INSERT INTO sources (id, path, destination, created_at) VALUES (?, ?, ?, ?)')
+      .run('legacy-id', source, target, Date.now())
+    raw.close()
+
+    engine = await BackupEngine.create({ dbPath, watchEnabled: false })
+    const result = await engine.backupMany(['legacy-id'])
+
+    expect(result.succeeded).toEqual(['legacy-id'])
+    expect(result.skipped).toEqual([])
+    expect(await readFile(target, 'utf8')).toBe('legacy')
   })
 })

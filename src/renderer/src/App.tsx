@@ -195,28 +195,37 @@ export default function App() {
         setNotice(null)
 
         const ok = result.succeeded.length
+        const skipped = result.skipped.length
         const failed = result.failed.length
         if (ok > 0) flashSources(result.succeeded)
 
         if (failed === 0) {
-          if (ok > 0) {
+          if (ok > 0 && skipped > 0) {
+            showToast('success', formatTemplate(language, 'backupMixed', { ok, m: skipped }))
+          } else if (ok > 0) {
             showToast(
               'success',
               ok === 1
                 ? t(language, 'backupDoneOne')
                 : formatTemplate(language, 'backupDone', { n: ok }),
             )
+          } else if (skipped === 1) {
+            showToast('success', t(language, 'backupSkippedOne'))
+          } else if (skipped > 1) {
+            showToast('success', formatTemplate(language, 'backupSkipped', { n: skipped }))
           }
           return
         }
 
         showToast(
           'error',
-          ok > 0
-            ? formatTemplate(language, 'backupPartial', { ok, n: failed })
-            : failed === 1
-              ? t(language, 'backupFailedOne')
-              : formatTemplate(language, 'backupFailed', { n: failed }),
+          ok > 0 && skipped > 0
+            ? formatTemplate(language, 'backupPartialMixed', { ok, m: skipped, n: failed })
+            : ok > 0
+              ? formatTemplate(language, 'backupPartial', { ok, n: failed })
+              : failed === 1
+                ? t(language, 'backupFailedOne')
+                : formatTemplate(language, 'backupFailed', { n: failed }),
         )
       } catch (error) {
         setNotice(readError(error))
