@@ -32,20 +32,20 @@
     "electron-log": "5.4.4"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.4",
-    "@tailwindcss/vite": "4.3.3",
+    "@biomejs/biome": "2.6.5",
+    "@tailwindcss/vite": "4.3.4",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "6.1.2",
-    "electron": "45.1.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "electron": "45.2.2",
     "electron-builder": "26.18.0",
     "electron-vite": "6.0.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "tailwindcss": "4.3.3",
+    "tailwindcss": "4.3.4",
     "typescript": "7.0.2",
     "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   }
 }
