@@ -15,7 +15,6 @@ let engine: BackupEngine | null = null
 let settingsStore: SettingsStore | null = null
 let tray: TrayController | null = null
 let isQuitting = false
-let shuttingDown = false
 
 // 托盘在本机是否确定可见；GNOME 等无托盘环境关窗必须退出，否则应用失联
 const hideToTray = hideToTrayOnClose(process.platform, process.env.XDG_CURRENT_DESKTOP)
@@ -151,6 +150,16 @@ async function bootstrap(): Promise<void> {
     onEvent: broadcast,
   })
 
+  // 退出抢在启动完成前到达时，刚建好的引擎要就地释放；
+  // 否则 will-quit 已放过（当时 engine 还是 null），这个引擎再没人关。
+  // exit(0) 兜底：不依赖自然退出序列真的走到进程终止
+  if (isQuitting) {
+    await engine.dispose()
+    engine = null
+    app.exit(0)
+    return
+  }
+
   registerIpc({
     engine,
     getWindow: () => mainWindow,
@@ -207,9 +216,14 @@ const hasLock = app.requestSingleInstanceLock()
 if (!hasLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => showWindow())
+  app.on('second-instance', () => {
+    // 退出排干期间的二次启动不应再开窗口
+    if (isQuitting) return
+    showWindow()
+  })
 
   app.on('activate', () => {
+    if (isQuitting) return
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createWindow()
     } else {
@@ -222,20 +236,38 @@ if (!hasLock) {
     if (!hideToTray) app.quit()
   })
 
-  app.on('before-quit', (event) => {
-    if (shuttingDown) return
-
-    // 先排空运行中的备份再退出，避免留下半截文件
-    event.preventDefault()
-    shuttingDown = true
+  app.on('before-quit', () => {
     isQuitting = true
     tray?.destroy()
     tray = null
+  })
 
-    const draining = engine?.dispose() ?? Promise.resolve()
+  // 排干放在 will-quit：窗口已关、界面立即消失，备份在后台收尾。
+  // 不能用 before-quit + preventDefault + 二次 app.quit() 的写法——
+  // 第二次 quit 可能赶在首次退出序列收尾的窗口期里被吞掉，进程带着
+  // 已关闭的数据库残留，重开经单实例锁落回旧进程后所有 IPC 都报
+  // "database is not open"（用户实测遇到的僵尸态）。
+  app.on('will-quit', (event) => {
+    const draining = engine
+    if (!draining) return
+
+    event.preventDefault()
     engine = null
 
-    void draining.catch((error) => log.error('dispose failed', error)).finally(() => app.quit())
+    // 排干设上限：卡死的文件操作不能把无窗口无托盘的进程变成隐形
+    // 僵尸；原子复制保证强杀时上一份副本完好，没做完的下次启动对账补齐
+    const forceExit = setTimeout(() => {
+      log.warn('engine dispose timed out, forcing exit')
+      app.exit(0)
+    }, 10_000)
+
+    void draining
+      .dispose()
+      .catch((error) => log.error('dispose failed', error))
+      .finally(() => {
+        clearTimeout(forceExit)
+        app.exit(0)
+      })
   })
 
   app
