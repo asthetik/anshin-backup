@@ -6,14 +6,20 @@ import type { BackupEngine as Engine } from '../src/main/engine'
 
 vi.mock('../src/main/engine/copier', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/main/engine/copier')>()
-  const { writeFile: write } = await import('node:fs/promises')
+  const { utimes, writeFile: write } = await import('node:fs/promises')
   let copies = 0
   return {
     ...actual,
-    // 第二次复制时模拟竞态：哈希采样后、复制落盘前源被同大小改写（mtime 正常更新）
+    // 第二次复制时模拟竞态：哈希采样后、复制落盘前源被同大小改写。
+    // 显式推进 mtime：文件系统时间精度可能使改写与采样落入同一刻度，
+    // 「复制后复查」因此误判为 settled，导致该测试在 Windows CI 上间歇性失败
     copyFileAtomic: async (source: string, destination: string) => {
       copies += 1
-      if (copies === 2) await write(source, 'v9')
+      if (copies === 2) {
+        await write(source, 'v9')
+        const bumped = new Date(Date.now() + 10_000)
+        await utimes(source, bumped, bumped)
+      }
       await actual.copyFileAtomic(source, destination)
     },
   }
