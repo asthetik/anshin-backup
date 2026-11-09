@@ -9,6 +9,7 @@ import { describeError, formatTemplate, t } from './i18n'
 
 const isMac = navigator.userAgent.includes('Macintosh')
 const autoStartSupported = true
+const hideDockSupported = isMac
 
 export default function App() {
   const [sources, setSources] = useState<Source[]>([])
@@ -334,6 +335,11 @@ export default function App() {
     await updateSettings({ autoStart: !settings.autoStart })
   }, [settings, updateSettings])
 
+  const toggleHideDock = useCallback(async () => {
+    if (!settings) return
+    await updateSettings({ hideDockOnClose: !settings.hideDockOnClose })
+  }, [settings, updateSettings])
+
   const moveFocus = useCallback(
     (delta: number) => {
       if (sources.length === 0) return
@@ -570,8 +576,10 @@ export default function App() {
           settings={settings}
           language={language}
           autoStartSupported={autoStartSupported}
+          hideDockSupported={hideDockSupported}
           onChangeLanguage={(value) => void changeLanguage(value)}
           onToggleAutoStart={() => void toggleAutoStart()}
+          onToggleHideDock={() => void toggleHideDock()}
           onClose={() => setSettingsOpen(false)}
         />
       ) : null}

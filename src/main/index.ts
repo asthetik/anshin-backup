@@ -1,10 +1,12 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import log from 'electron-log/main'
 import { IPC } from '../shared/ipc'
+import { knownSettingsFields } from '../shared/settings'
 import type { EngineEvent, Settings } from '../shared/types'
 import { applyAutoStart } from './autostart'
 import { BackupEngine } from './engine'
+import { mainT } from './i18n'
 import { registerIpc } from './ipc'
 import { hideToTrayOnClose } from './linux'
 import { SettingsStore } from './settings'
@@ -29,6 +31,8 @@ function defaultSettings(): Settings {
     language: locale.startsWith('zh') ? 'zh' : 'en',
     autoStart: false,
     paused: false,
+    hideDockOnClose: false,
+    closeNoticeAcknowledged: false,
   }
 }
 
@@ -43,7 +47,125 @@ function broadcast(event: EngineEvent): void {
   if (event.type === 'state') tray?.refresh()
 }
 
+// ---- 关窗驻留的 Dock 图标管理 ----
+
+// Electron 已知问题：距上一次 dock 调用 1 秒内的 hide() 会被忽略，
+// 快速关-开-关会把图标卡在显示态；dock 调用集中在这里串行化
+let lastDockOpAt = 0
+let pendingDockHide: NodeJS.Timeout | null = null
+
+function setDockHidden(hidden: boolean): void {
+  if (pendingDockHide) {
+    clearTimeout(pendingDockHide)
+    pendingDockHide = null
+  }
+  if (!hidden) {
+    lastDockOpAt = Date.now()
+    app.dock?.show()
+    return
+  }
+  const wait = Math.max(0, 1100 - (Date.now() - lastDockOpAt))
+  pendingDockHide = setTimeout(() => {
+    pendingDockHide = null
+    lastDockOpAt = Date.now()
+    if (!isQuitting) app.dock?.hide()
+  }, wait)
+}
+
+// 全屏关窗先退全屏再收；转换期间窗口若被重新唤起或重进全屏，挂起的收起回调要作废。
+// 用代数计数而非移除监听：转换中途重进全屏时 leave-full-screen 可能再不触发，
+// 靠移除监听会让回调悬空；回调自己核对代数，过期就什么都不做
+let fullscreenHideGeneration = 0
+
+function cancelPendingFullscreenHide(): void {
+  fullscreenHideGeneration += 1
+}
+
+// 关窗驻留：窗口收起；开启「隐藏程序坞图标」时同时收起 Dock。
+// 全屏下直接 hide 会留一块黑屏，先退出全屏，等 leave-full-screen 再收
+function hideWindowToTray(window: BrowserWindow): void {
+  cancelPendingFullscreenHide()
+  const generation = fullscreenHideGeneration
+
+  const hide = (): void => {
+    // 转换期间窗口被重新唤起，或又退出了全屏转换，这次收起作废
+    if (generation !== fullscreenHideGeneration) return
+    if (window.isDestroyed() || isQuitting) return
+    window.hide()
+    if (settingsStore?.get().hideDockOnClose) setDockHidden(true)
+  }
+
+  if (process.platform === 'darwin' && window.isFullScreen()) {
+    window.once('leave-full-screen', hide)
+    window.setFullScreen(false)
+    return
+  }
+  hide()
+}
+
+// 首次关窗的平台分流：macOS 问程序坞图标去留（选择即开关的首次赋值，
+// Esc 走默认「保留」并记档）；Windows 告知后台运行（取消则下次再问）；
+// Linux 不打扰。之后关窗直接收起
+let closeChoicePending = false
+
+function hideToTrayWithNotice(window: BrowserWindow): void {
+  const settings = settingsStore?.get()
+  if (!settings || settings.closeNoticeAcknowledged || process.platform === 'linux') {
+    hideWindowToTray(window)
+    return
+  }
+  // 反复点 X 只弹一次
+  if (closeChoicePending) return
+  closeChoicePending = true
+
+  const language = settings.language
+  const macOS = process.platform === 'darwin'
+
+  void (
+    macOS
+      ? dialog.showMessageBox(window, {
+          type: 'question',
+          message: mainT(language, 'dockChoiceTitle'),
+          buttons: [mainT(language, 'dockChoiceKeep'), mainT(language, 'dockChoiceHide')],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        })
+      : dialog.showMessageBox(window, {
+          type: 'info',
+          message: mainT(language, 'closeNoticeTitle'),
+          buttons: [mainT(language, 'closeNoticeButton')],
+          defaultId: 0,
+          cancelId: -1,
+          noLink: true,
+        })
+  )
+    .then((result) => {
+      if (macOS) {
+        // 保留=0（默认/Esc）隐藏=1；选择即 hideDockOnClose 的首次赋值
+        settingsStore?.update({
+          closeNoticeAcknowledged: true,
+          hideDockOnClose: result.response === 1,
+        })
+        hideWindowToTray(window)
+        return
+      }
+      // Windows：只有明确「知道了」才记档并收起；取消则窗口留在原地
+      if (result.response !== 0) return
+      settingsStore?.update({ closeNoticeAcknowledged: true })
+      hideWindowToTray(window)
+    })
+    .catch(() => {
+      // 弹框异常（如退出时窗口被销毁）按未回答处理：窗口留在原地，下次再问
+    })
+    .finally(() => {
+      closeChoicePending = false
+    })
+}
+
 function createWindow(): BrowserWindow {
+  // 新建的窗口必然可见，Dock 图标同步可见（覆盖 activate 直建窗口的路径）
+  setDockHidden(false)
   const window = new BrowserWindow({
     width: 940,
     height: 680,
@@ -71,7 +193,7 @@ function createWindow(): BrowserWindow {
     // 托盘可见才驻留；无托盘环境放行关闭，由 window-all-closed 负责退出
     if (isQuitting || !hideToTray) return
     event.preventDefault()
-    window.hide()
+    hideToTrayWithNotice(window)
   })
 
   // 放行关闭后窗口会真正销毁，悬空的引用会让后续 show/broadcast 抛错
@@ -95,6 +217,10 @@ function createWindow(): BrowserWindow {
 }
 
 function showWindow(): void {
+  // 窗口回来时 Dock 图标一起回来；同步作废挂起的收起
+  // （推迟中的 dock.hide、全屏转换途中的收起回调）
+  cancelPendingFullscreenHide()
+  setDockHidden(false)
   if (!mainWindow) {
     mainWindow = createWindow()
     return
@@ -105,23 +231,19 @@ function showWindow(): void {
   mainWindow.focus()
 }
 
-function sanitizePatch(patch: Partial<Settings>): Partial<Settings> {
-  const clean: Partial<Settings> = {}
-  if (patch.language === 'zh' || patch.language === 'en') clean.language = patch.language
-  if (typeof patch.autoStart === 'boolean') clean.autoStart = patch.autoStart
-  if (typeof patch.paused === 'boolean') clean.paused = patch.paused
-  return clean
-}
-
 let settingsQueue: Promise<unknown> = Promise.resolve()
 
 async function applySettings(patch: Partial<Settings>): Promise<Settings> {
   if (!settingsStore || !engine) throw new Error('Anshin is not ready')
 
   const before = settingsStore.get()
-  const next = settingsStore.update(sanitizePatch(patch))
+  const next = settingsStore.update(knownSettingsFields(patch))
 
   if (next.autoStart !== before.autoStart) applyAutoStart(next.autoStart)
+  // 用户拨过这个开关等于已回答过首关弹框的问题，之后关窗不再问
+  if (next.hideDockOnClose !== before.hideDockOnClose) {
+    settingsStore.update({ closeNoticeAcknowledged: true })
+  }
   if (next.paused !== before.paused) await engine.setPaused(next.paused)
   if (next.language !== before.language) tray?.refresh()
 
@@ -142,7 +264,7 @@ async function bootstrap(): Promise<void> {
   log.initialize()
 
   const userData = app.getPath('userData')
-  settingsStore = new SettingsStore(join(userData, 'settings.json'), defaultSettings())
+  settingsStore = new SettingsStore(join(userData, 'settings.toml'), defaultSettings())
   const settings = settingsStore.get()
 
   engine = await BackupEngine.create({
@@ -238,6 +360,15 @@ if (!hasLock) {
 
   app.on('before-quit', () => {
     isQuitting = true
+    // 排干期间（最多 10 秒）窗口已收、托盘已毁，推迟中的 dock.hide 若不
+    // 立即兑现，图标会以死状态挂在程序坞直到进程退出。距上次 dock 调用
+    // 不足 1 秒时 macOS 可能忽略这次 hide，但进程退出后图标总会消失，
+    // 只是排干期间短暂可见，可接受
+    if (pendingDockHide) {
+      clearTimeout(pendingDockHide)
+      pendingDockHide = null
+      app.dock?.hide()
+    }
     tray?.destroy()
     tray = null
   })

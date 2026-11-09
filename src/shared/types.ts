@@ -13,6 +13,8 @@ export interface Settings {
   language: Language
   autoStart: boolean
   paused: boolean
+  hideDockOnClose: boolean
+  closeNoticeAcknowledged: boolean
 }
 
 export type EngineEvent =

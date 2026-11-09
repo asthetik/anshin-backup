@@ -48,6 +48,8 @@ const strings = {
 
     autoStart: '开机自动启动',
     autoStartDesc: '开机后自动在后台备份',
+    hideDock: '关闭窗口时隐藏程序坞图标',
+    hideDockDesc: '关闭窗口后仅保留菜单栏图标，自动备份不受影响',
     language: '语言',
     languageDesc: '切换后立即生效',
     done: '完成',
@@ -116,6 +118,9 @@ const strings = {
 
     autoStart: 'Launch at login',
     autoStartDesc: 'Back up automatically in the background',
+    hideDock: 'Hide Dock icon when window is closed',
+    hideDockDesc:
+      'After closing the window, only the menu bar icon remains; backups are unaffected',
     language: 'Language',
     languageDesc: 'Applies immediately',
     done: 'Done',

@@ -5,8 +5,10 @@ interface SettingsDialogProps {
   settings: Settings
   language: Language
   autoStartSupported: boolean
+  hideDockSupported: boolean
   onChangeLanguage: (language: Language) => void
   onToggleAutoStart: () => void
+  onToggleHideDock: () => void
   onClose: () => void
 }
 
@@ -15,8 +17,10 @@ export function SettingsDialog({
   settings,
   language,
   autoStartSupported,
+  hideDockSupported,
   onChangeLanguage,
   onToggleAutoStart,
+  onToggleHideDock,
   onClose,
 }: SettingsDialogProps) {
   return (
@@ -60,6 +64,31 @@ export function SettingsDialog({
               />
             </button>
           </div>
+
+          {hideDockSupported && (
+            <div className="flex items-center justify-between gap-6 border-b border-line py-3.5">
+              <div className="min-w-0">
+                <p className="text-[13.5px] text-ink">{t(language, 'hideDock')}</p>
+                <p className="mt-[3px] text-[12px] text-ink-3">{t(language, 'hideDockDesc')}</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.hideDockOnClose}
+                aria-label={t(language, 'hideDock')}
+                onClick={onToggleHideDock}
+                className={`relative h-[21px] w-[38px] shrink-0 rounded-full border-0 transition-colors ${
+                  settings.hideDockOnClose ? 'bg-ok' : 'bg-[#DCDCD6]'
+                }`}
+              >
+                <span
+                  className={`absolute top-[2px] left-[2px] h-[17px] w-[17px] rounded-full bg-white transition-transform ${
+                    settings.hideDockOnClose ? 'translate-x-[17px]' : ''
+                  }`}
+                />
+              </button>
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-6 border-b border-line py-3.5">
             <div className="min-w-0">

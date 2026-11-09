@@ -9,6 +9,11 @@ const mainStrings = {
     settings: '设置',
     quit: '退出',
     tooltip: 'Anshin · 默然守护',
+    dockChoiceTitle: '关闭窗口时隐藏程序坞图标？',
+    dockChoiceKeep: '保留',
+    dockChoiceHide: '隐藏',
+    closeNoticeTitle: 'Anshin 将继续在后台运行',
+    closeNoticeButton: '知道了',
   },
   en: {
     open: 'Open Anshin',
@@ -18,6 +23,11 @@ const mainStrings = {
     settings: 'Settings',
     quit: 'Quit',
     tooltip: 'Anshin · Quietly watching',
+    dockChoiceTitle: 'Hide the Dock icon when closing the window?',
+    dockChoiceKeep: 'Keep',
+    dockChoiceHide: 'Hide',
+    closeNoticeTitle: 'Anshin keeps running in the background',
+    closeNoticeButton: 'Got it',
   },
 } as const
 
