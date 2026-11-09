@@ -48,7 +48,7 @@ v0.1 watches and copies individual files. Watching folders, version history, and
 
 ## Build from source
 
-Requires Node.js 22.22+ and pnpm.
+Requires Node.js 26+ and pnpm.
 
 ```bash
 pnpm install

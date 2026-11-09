@@ -1,6 +1,6 @@
 {
   "name": "anshin-backup",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Quiet file monitoring & effortless backup for everyone.",
   "type": "module",
@@ -8,7 +8,7 @@
   "license": "MIT",
   "author": "asthetik <asthetik.sun@outlook.com>",
   "engines": {
-    "node": ">=22.22"
+    "node": ">=26"
   },
   "packageManager": "pnpm@11.21.0",
   "homepage": "https://github.com/asthetik/anshin-backup",
@@ -29,23 +29,24 @@
   },
   "dependencies": {
     "chokidar": "6.0.0",
-    "electron-log": "5.4.4"
+    "electron-log": "5.4.4",
+    "smol-toml": "1.9.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.4",
-    "@tailwindcss/vite": "4.3.3",
+    "@biomejs/biome": "2.6.6",
+    "@tailwindcss/vite": "4.3.5",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "6.1.2",
-    "electron": "45.1.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "electron": "45.2.3",
     "electron-builder": "26.18.0",
     "electron-vite": "6.0.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "tailwindcss": "4.3.3",
+    "tailwindcss": "4.3.5",
     "typescript": "7.0.2",
-    "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
   }
 }

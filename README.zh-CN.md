@@ -48,7 +48,7 @@ v0.1 目前按文件监听和复制，可以添加多个文件。文件夹监听
 
 ## 从源码构建
 
-需要 Node.js 22.22+ 与 pnpm。
+需要 Node.js 26+ 与 pnpm。
 
 ```bash
 pnpm install
