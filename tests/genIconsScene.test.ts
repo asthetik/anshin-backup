@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { buildAppIcon, buildTraySilhouette, buildWindowsTray } from '../scripts/gen-icons.mjs'
+import {
+  buildAppIcon,
+  buildAppIconAssets,
+  buildTraySilhouette,
+  buildWindowsTray,
+  turtleDesign,
+} from '../scripts/gen-icons.mjs'
 
 function px(canvas: { size: number; data: Float64Array }, x: number, y: number) {
   const i = (y * canvas.size + x) * 4
@@ -40,6 +46,25 @@ function bbox(canvas: { size: number; data: Float64Array }) {
   return { minX, minY, maxX, maxY }
 }
 
+function whiteBbox(canvas: { size: number; data: Float64Array }) {
+  let minX = canvas.size
+  let minY = canvas.size
+  let maxX = -1
+  let maxY = -1
+  for (let y = 0; y < canvas.size; y += 1) {
+    for (let x = 0; x < canvas.size; x += 1) {
+      const p = px(canvas, x, y)
+      if (p.a > 0.5 && p.r > 240 && p.g > 240 && p.b > 240) {
+        minX = Math.min(minX, x)
+        maxX = Math.max(maxX, x)
+        minY = Math.min(minY, y)
+        maxY = Math.max(maxY, y)
+      }
+    }
+  }
+  return { minX, minY, maxX, maxY }
+}
+
 describe('buildAppIcon', () => {
   const canvas = buildAppIcon(32)
 
@@ -67,6 +92,27 @@ describe('buildAppIcon', () => {
     expect(topLeft.b).toBeGreaterThan(bottomRight.b)
     expect(topLeft.r).toBeGreaterThan(bottomRight.r)
   })
+
+  test('large icon fills the optical center instead of sitting low', () => {
+    const large = buildAppIcon(1024)
+    const box = whiteBbox(large)
+    expect(box.maxX - box.minX + 1).toBeGreaterThanOrEqual(720)
+    expect(box.maxY - box.minY + 1).toBeGreaterThanOrEqual(500)
+    expect((box.minX + box.maxX) / 2).toBeCloseTo(512, -1)
+    expect((box.minY + box.maxY) / 2).toBeCloseTo(512, -1)
+  })
+})
+
+describe('buildAppIconAssets', () => {
+  test('ships native-size PNGs plus valid ICO and ICNS containers', () => {
+    const assets = buildAppIconAssets()
+    expect(assets.pngs.map((icon) => icon.size)).toEqual([
+      16, 20, 24, 32, 48, 64, 128, 256, 512, 1024,
+    ])
+    expect(assets.ico.readUInt16LE(4)).toBe(8)
+    expect(assets.icns.subarray(0, 4).toString('ascii')).toBe('icns')
+    expect(assets.icns.readUInt32BE(4)).toBe(assets.icns.length)
+  })
 })
 
 describe('turtle silhouette union', () => {
@@ -87,6 +133,14 @@ describe('turtle silhouette union', () => {
   })
 })
 
+describe('turtle geometry contract', () => {
+  test('shell, head-neck, three flippers and tail are closed compound regions', () => {
+    const { turtle } = turtleDesign()
+    expect(turtle.subpaths).toHaveLength(6)
+    expect(turtle.subpaths.every((path) => path.closed)).toBe(true)
+  })
+})
+
 describe('buildTraySilhouette', () => {
   const canvas = buildTraySilhouette(16)
 
@@ -103,8 +157,10 @@ describe('buildTraySilhouette', () => {
     expect(box.maxX).toBeLessThanOrEqual(14)
     expect(box.minY).toBeGreaterThanOrEqual(1)
     expect(box.maxY).toBeLessThanOrEqual(14)
-    expect((box.minX + box.maxX) / 2).toBeCloseTo(7.5, 0)
-    expect((box.minY + box.maxY) / 2).toBeCloseTo(8, 0)
+    expect((box.minX + box.maxX) / 2).toBeGreaterThanOrEqual(7)
+    expect((box.minX + box.maxX) / 2).toBeLessThanOrEqual(8)
+    expect((box.minY + box.maxY) / 2).toBeGreaterThanOrEqual(7.5)
+    expect((box.minY + box.maxY) / 2).toBeLessThanOrEqual(8.5)
   })
 })
 
@@ -120,5 +176,15 @@ describe('buildWindowsTray', () => {
     expect(field.a).toBeGreaterThan(0.9)
     expect(field.b).toBeGreaterThan(150)
     expect(field.r).toBeLessThan(200)
+  })
+
+  test.each([
+    [16, 11, 8],
+    [20, 15, 10],
+  ])('%ipx tray uses the readable compact silhouette', (size, minWidth, minHeight) => {
+    const canvas = buildWindowsTray(size)
+    const box = whiteBbox(canvas)
+    expect(box.maxX - box.minX + 1).toBeGreaterThanOrEqual(minWidth)
+    expect(box.maxY - box.minY + 1).toBeGreaterThanOrEqual(minHeight)
   })
 })

@@ -21,8 +21,13 @@ export interface Paint {
   readonly kind: 'solid' | 'linear'
 }
 
+export interface Subpath {
+  readonly cmds: readonly unknown[]
+  readonly closed: boolean
+}
+
 export interface PathBuilder {
-  readonly subpaths: readonly unknown[]
+  readonly subpaths: readonly Subpath[]
   moveTo(x: number, y: number): PathBuilder
   lineTo(x: number, y: number): PathBuilder
   cubicTo(x1: number, y1: number, x2: number, y2: number, x: number, y: number): PathBuilder

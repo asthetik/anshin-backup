@@ -17,7 +17,7 @@ asar: true
 # arm64 载荷的杂交包,且与 x64 msi 同 UpgradeCode 会互相静默卸载,故 msi 只出 x64
 mac:
   category: public.app-category.utilities
-  icon: build/icon.png
+  icon: build/icon.icns
   artifactName: Anshin-${version}-macos-${arch}.${ext}
   target:
     - target: dmg
@@ -26,7 +26,7 @@ mac:
       arch: [x64, arm64]
 
 win:
-  icon: build/icon.png
+  icon: build/icon.ico
   artifactName: Anshin-${version}-windows-${arch}.${ext}
   target:
     - target: nsis
@@ -35,7 +35,7 @@ win:
       arch: [x64]
 
 linux:
-  icon: build/icon.png
+  icon: build/icons
   category: Utility
   artifactName: Anshin-${version}-linux-${arch}.${ext}
   target:
