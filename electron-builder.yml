@@ -34,6 +34,16 @@ win:
     - target: msi
       arch: [x64]
 
+# NSIS 默认 oneClick 静默安装,用户无法选择安装路径;改为向导式安装并允许自定义目录。
+# 其余保持默认:按用户安装(无需管理员),桌面与开始菜单快捷方式照常创建。
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+# msi 亦默认静默安装;关闭 oneClick 后启用 WixUI_InstallDir 向导,提供目录选择页。
+msi:
+  oneClick: false
+
 linux:
   icon: build/icons
   category: Utility
