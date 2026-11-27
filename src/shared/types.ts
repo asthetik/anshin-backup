@@ -22,6 +22,9 @@ export type EngineEvent =
   | { type: 'source-removed'; sourceId: string }
   | { type: 'state'; paused: boolean }
 
+/** Windows 首次关窗时渲染进程弹窗的三种回答；cancel 不算回答，下次再问 */
+export type CloseChoice = 'background' | 'quit' | 'cancel'
+
 export interface PickedSource {
   canceled: boolean
   path: string | null

@@ -1,9 +1,9 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, shell } from 'electron'
 import log from 'electron-log/main'
 import { IPC } from '../shared/ipc'
 import { knownSettingsFields } from '../shared/settings'
-import type { EngineEvent, Settings } from '../shared/types'
+import type { CloseChoice, EngineEvent, Language, Settings } from '../shared/types'
 import { applyAutoStart } from './autostart'
 import { BackupEngine } from './engine'
 import { mainT } from './i18n'
@@ -103,57 +103,100 @@ function hideWindowToTray(window: BrowserWindow): void {
   hide()
 }
 
-// 首次关窗的平台分流：macOS 问程序坞图标去留（选择即开关的首次赋值，
-// Esc 走默认「保留」并记档）；Windows 告知后台运行（取消则下次再问）；
+// 首次关窗的平台分流：macOS 用原生弹框问程序坞图标去留（选择即开关的
+// 首次赋值，Esc 走默认「保留」并记档）；Windows 把问题发到渲染进程，用与
+// 界面一致的弹窗问是否驻留后台（是→收起，否→退出，取消不算回答，下次再问）；
 // Linux 不打扰。之后关窗直接收起
 let closeChoicePending = false
+// Windows 界面内弹窗是否正等待回答；重复关窗时用来把问题带回前台
+let closeChoiceRequested = false
 
 function hideToTrayWithNotice(window: BrowserWindow): void {
   const settings = settingsStore?.get()
-  if (!settings || settings.closeNoticeAcknowledged || process.platform === 'linux') {
+  if (!settings || settings.closeNoticeAcknowledged) {
     hideWindowToTray(window)
     return
   }
-  // 反复点 X 只弹一次
-  if (closeChoicePending) return
-  closeChoicePending = true
 
-  const language = settings.language
-  const macOS = process.platform === 'darwin'
+  if (process.platform === 'linux') {
+    hideWindowToTray(window)
+    return
+  }
 
-  void (
-    macOS
-      ? dialog.showMessageBox(window, {
-          type: 'question',
-          message: mainT(language, 'dockChoiceTitle'),
-          buttons: [mainT(language, 'dockChoiceKeep'), mainT(language, 'dockChoiceHide')],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-        })
-      : dialog.showMessageBox(window, {
-          type: 'info',
-          message: mainT(language, 'closeNoticeTitle'),
-          buttons: [mainT(language, 'closeNoticeButton')],
-          defaultId: 0,
-          cancelId: -1,
-          noLink: true,
-        })
-  )
-    .then((result) => {
-      if (macOS) {
+  if (process.platform === 'darwin') {
+    // 反复点 X 只弹一次
+    if (closeChoicePending) return
+    closeChoicePending = true
+    const language = settings.language
+
+    void dialog
+      .showMessageBox(window, {
+        type: 'question',
+        message: mainT(language, 'dockChoiceTitle'),
+        buttons: [mainT(language, 'dockChoiceKeep'), mainT(language, 'dockChoiceHide')],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+      .then((result) => {
         // 保留=0（默认/Esc）隐藏=1；选择即 hideDockOnClose 的首次赋值
         settingsStore?.update({
           closeNoticeAcknowledged: true,
           hideDockOnClose: result.response === 1,
         })
-        hideWindowToTray(window)
-        return
-      }
-      // Windows：只有明确「知道了」才记档并收起；取消则窗口留在原地
-      if (result.response !== 0) return
-      settingsStore?.update({ closeNoticeAcknowledged: true })
-      hideWindowToTray(window)
+        if (!window.isDestroyed()) hideWindowToTray(window)
+      })
+      .catch(() => {
+        // 弹框异常（如退出时窗口被销毁）按未回答处理：窗口留在原地，下次再问
+      })
+      .finally(() => {
+        closeChoicePending = false
+      })
+    return
+  }
+
+  // Windows：确认弹窗画在渲染进程里（原生消息框与整体 UI 风格不符）
+  if (window.isDestroyed()) return
+
+  // 渲染进程已崩时界面弹窗无处可画：退回原生消息框问同一个问题，
+  // 不能让关窗按钮从此无声失效
+  if (window.webContents.isCrashed()) {
+    askCloseChoiceNatively(window, settings.language)
+    return
+  }
+
+  // 问题还悬着：窗口可能被最小化，或弹窗请求被尚未就绪的渲染进程错过。
+  // 带回前台并重发一次请求（渲染侧 setCloseChoiceOpen(true) 幂等）
+  if (closeChoiceRequested) {
+    if (window.isMinimized()) window.restore()
+    window.focus()
+    window.webContents.send(IPC.requestCloseChoice)
+    return
+  }
+
+  closeChoiceRequested = true
+  window.webContents.send(IPC.requestCloseChoice)
+}
+
+// 渲染进程不可用时的原生版关窗询问；回答走同一条 performCloseChoice
+function askCloseChoiceNatively(window: BrowserWindow, language: Language): void {
+  if (closeChoicePending) return
+  closeChoicePending = true
+
+  void dialog
+    .showMessageBox(window, {
+      type: 'question',
+      message: mainT(language, 'closeAskTitle'),
+      detail: mainT(language, 'closeAskBody'),
+      buttons: [mainT(language, 'closeAskBackground'), mainT(language, 'closeAskQuit')],
+      defaultId: 0,
+      cancelId: -1,
+      noLink: true,
+    })
+    .then((result) => {
+      const choice: CloseChoice =
+        result.response === 0 ? 'background' : result.response === 1 ? 'quit' : 'cancel'
+      performCloseChoice(choice)
     })
     .catch(() => {
       // 弹框异常（如退出时窗口被销毁）按未回答处理：窗口留在原地，下次再问
@@ -161,6 +204,28 @@ function hideToTrayWithNotice(window: BrowserWindow): void {
     .finally(() => {
       closeChoicePending = false
     })
+}
+
+function performCloseChoice(choice: CloseChoice): void {
+  closeChoiceRequested = false
+  // IPC 传来的回答不可全信：未识别的值一律按「取消」处理，不能落到最重的「退出」
+  if (choice !== 'background' && choice !== 'quit') return
+
+  if (choice === 'quit') {
+    // 「退出」是一次性动作，不代表以后关窗的去向；不记档，下次启动首次关窗再问
+    isQuitting = true
+    app.quit()
+    return
+  }
+
+  try {
+    settingsStore?.update({ closeNoticeAcknowledged: true })
+  } catch (error) {
+    // 写盘失败（文件被占用/磁盘满）不能把用户的回答吞掉：照常驻留，
+    // 只是设置没落盘，下次启动还会再问一次
+    log.error('记录关窗选择失败', error)
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) hideWindowToTray(mainWindow)
 }
 
 function createWindow(): BrowserWindow {
@@ -188,6 +253,36 @@ function createWindow(): BrowserWindow {
   })
 
   window.once('ready-to-show', () => window.show())
+
+  // 菜单已移除，Windows/Linux 开发态没有 DevTools/刷新快捷键入口；补回
+  // F12 与 Ctrl+R（按住不放的自动重复不算新按键，带修饰键的组合也不响应）
+  if (!app.isPackaged) {
+    window.webContents.on('before-input-event', (_event, input) => {
+      if (input.type !== 'keyDown' || input.isAutoRepeat) return
+      const plain = !input.alt && !input.control && !input.meta && !input.shift
+      if (plain && input.key === 'F12') {
+        window.webContents.toggleDevTools()
+        return
+      }
+      if (
+        input.control &&
+        !input.alt &&
+        !input.meta &&
+        !input.shift &&
+        input.key.toLowerCase() === 'r'
+      ) {
+        window.webContents.reload()
+      }
+    })
+    // 焦点进了 DevTools 后页面侧收不到 F12，DevTools 自己补一个关闭入口
+    window.webContents.on('devtools-opened', () => {
+      window.webContents.devToolsWebContents?.on('before-input-event', (_event, input) => {
+        if (input.type !== 'keyDown' || input.isAutoRepeat) return
+        const plain = !input.alt && !input.control && !input.meta && !input.shift
+        if (plain && input.key === 'F12') window.webContents.closeDevTools()
+      })
+    })
+  }
 
   window.on('close', (event) => {
     // 托盘可见才驻留；无托盘环境放行关闭，由 window-all-closed 负责退出
@@ -263,6 +358,11 @@ function updateSettings(patch: Partial<Settings>): Promise<Settings> {
 async function bootstrap(): Promise<void> {
   log.initialize()
 
+  // Windows/Linux 会把默认菜单栏（File/Edit/View/Window）画进窗口，与自绘
+  // 标题栏叠成两行；界面完全依赖应用内按钮，直接移除。macOS 保持系统菜单
+  // （Cmd+Q 等快捷键挂在上面），不能动
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+
   const userData = app.getPath('userData')
   settingsStore = new SettingsStore(join(userData, 'settings.toml'), defaultSettings())
   const settings = settingsStore.get()
@@ -287,6 +387,7 @@ async function bootstrap(): Promise<void> {
     getWindow: () => mainWindow,
     getSettings: () => settingsStore?.get() ?? settings,
     updateSettings,
+    onCloseChoice: performCloseChoice,
   })
 
   mainWindow = createWindow()
@@ -310,6 +411,8 @@ async function bootstrap(): Promise<void> {
       },
       onOpenSettings: () => {
         showWindow()
+        // 关窗问题还悬着时先答它，设置等下次再开，避免两个弹窗叠在一起
+        if (closeChoiceRequested) return
         mainWindow?.webContents.send(IPC.requestSettings)
       },
       onQuit: () => {

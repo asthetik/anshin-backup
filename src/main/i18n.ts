@@ -12,8 +12,10 @@ const mainStrings = {
     dockChoiceTitle: '关闭窗口时隐藏程序坞图标？',
     dockChoiceKeep: '保留',
     dockChoiceHide: '隐藏',
-    closeNoticeTitle: 'Anshin 将继续在后台运行',
-    closeNoticeButton: '知道了',
+    closeAskTitle: '关闭窗口后，要继续在后台备份吗？',
+    closeAskBody: '后台仍会自动备份，托盘图标随时可以打开窗口。',
+    closeAskBackground: '在后台运行',
+    closeAskQuit: '退出程序',
   },
   en: {
     open: 'Open Anshin',
@@ -26,8 +28,11 @@ const mainStrings = {
     dockChoiceTitle: 'Hide the Dock icon when closing the window?',
     dockChoiceKeep: 'Keep',
     dockChoiceHide: 'Hide',
-    closeNoticeTitle: 'Anshin keeps running in the background',
-    closeNoticeButton: 'Got it',
+    closeAskTitle: 'Keep backing up in the background after the window closes?',
+    closeAskBody:
+      'Backups keep running automatically. Reopen the window any time from the tray icon.',
+    closeAskBackground: 'Run in the background',
+    closeAskQuit: 'Quit Anshin',
   },
 } as const
 

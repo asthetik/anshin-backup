@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AnshinApi } from '../shared/api'
 import { IPC } from '../shared/ipc'
-import type { EngineEvent, Settings } from '../shared/types'
+import type { CloseChoice, EngineEvent, Settings } from '../shared/types'
 
 const api: AnshinApi = {
   listSources: () => ipcRenderer.invoke(IPC.listSources),
@@ -40,6 +40,16 @@ const api: AnshinApi = {
       ipcRenderer.removeListener(IPC.requestSettings, handler)
     }
   },
+  onRequestCloseChoice: (listener: () => void) => {
+    const handler = (): void => {
+      listener()
+    }
+    ipcRenderer.on(IPC.requestCloseChoice, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC.requestCloseChoice, handler)
+    }
+  },
+  closeChoice: (choice: CloseChoice) => ipcRenderer.invoke(IPC.closeChoice, choice),
 }
 
 contextBridge.exposeInMainWorld('anshin', api)

@@ -1,7 +1,7 @@
 import { dirname } from 'node:path'
 import { type BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
 import { IPC } from '../shared/ipc'
-import type { PickedSource, Settings } from '../shared/types'
+import type { CloseChoice, PickedSource, Settings } from '../shared/types'
 import type { BackupEngine } from './engine'
 
 export interface IpcContext {
@@ -9,6 +9,7 @@ export interface IpcContext {
   getWindow(): BrowserWindow | null
   getSettings(): Settings
   updateSettings(patch: Partial<Settings>): Promise<Settings>
+  onCloseChoice(choice: CloseChoice): void
 }
 
 async function pickFile(context: IpcContext) {
@@ -112,4 +113,8 @@ export function registerIpc(context: IpcContext): void {
   ipcMain.handle(IPC.updateSettings, (_event, patch: Partial<Settings>) =>
     context.updateSettings(patch),
   )
+
+  ipcMain.handle(IPC.closeChoice, (_event, choice: CloseChoice) => {
+    context.onCloseChoice(choice)
+  })
 }

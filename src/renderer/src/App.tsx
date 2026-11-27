@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Language, Settings, Source } from '../../shared/types'
+import type { CloseChoice, Language, Settings, Source } from '../../shared/types'
 import { AddDialog } from './components/AddDialog'
+import { CloseConfirmDialog } from './components/CloseConfirmDialog'
 import { PauseIcon, PlusIcon, SettingsIcon, ShieldIcon } from './components/icons'
 import { SettingsDialog } from './components/SettingsDialog'
 import { SourceRow } from './components/SourceRow'
@@ -22,6 +23,7 @@ export default function App() {
   const [pending, setPending] = useState<{ sourcePath: string; destination: string } | null>(null)
   const [adding, setAdding] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [closeChoiceOpen, setCloseChoiceOpen] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ id: number; kind: ToastKind; message: string } | null>(null)
   const [fresh, setFresh] = useState<Set<string>>(new Set())
@@ -72,10 +74,15 @@ export default function App() {
       setSettingsOpen(true)
     })
 
+    const unsubscribeCloseChoice = window.anshin.onRequestCloseChoice(() => {
+      setCloseChoiceOpen(true)
+    })
+
     return () => {
       alive = false
       unsubscribe()
       unsubscribeSettings()
+      unsubscribeCloseChoice()
     }
   }, [])
 
@@ -109,6 +116,11 @@ export default function App() {
   }, [])
 
   const dismissToast = useCallback(() => setToast(null), [])
+
+  const answerCloseChoice = useCallback((choice: CloseChoice) => {
+    setCloseChoiceOpen(false)
+    void window.anshin.closeChoice(choice).catch(() => undefined)
+  }, [])
 
   const flashSources = useCallback((ids: string[]) => {
     setFresh((previous) => {
@@ -357,6 +369,21 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      // 关窗弹窗期间其余按键不再触发主界面快捷键（原生弹框是应用级模态，
+      // 界面内弹窗要自己挡）；弹窗内的 Tab/Enter/Space 留给浏览器默认行为，
+      // 按钮激活与焦点循环由弹窗自己接管
+      if (closeChoiceOpen) {
+        if (event.key === 'Escape') {
+          answerCloseChoice('cancel')
+          return
+        }
+        const target = event.target instanceof HTMLElement ? event.target : null
+        if (event.key !== 'Tab' && !target?.closest('[data-close-choice]')) {
+          event.preventDefault()
+        }
+        return
+      }
+
       if (event.key === 'Escape') {
         if (settingsOpen) {
           setSettingsOpen(false)
@@ -419,6 +446,8 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     settingsOpen,
+    closeChoiceOpen,
+    answerCloseChoice,
     pending,
     sources,
     selected,
@@ -599,6 +628,15 @@ export default function App() {
 
       {toast ? (
         <Toast key={toast.id} kind={toast.kind} message={toast.message} onDismiss={dismissToast} />
+      ) : null}
+
+      {closeChoiceOpen ? (
+        <CloseConfirmDialog
+          language={language}
+          onBackground={() => answerCloseChoice('background')}
+          onQuit={() => answerCloseChoice('quit')}
+          onCancel={() => answerCloseChoice('cancel')}
+        />
       ) : null}
     </div>
   )
