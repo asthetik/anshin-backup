@@ -10,33 +10,28 @@ interface CloseConfirmDialogProps {
 }
 
 /** Windows 首次关窗的确认弹窗；样式与「添加备份/设置」弹窗一致。
- *  打开即聚焦主按钮（Enter 直接选「在后台运行」），Tab 在弹窗内循环 */
+ *  打开即聚焦主按钮（Enter 直接选「在后台运行」），Tab 在两个回答按钮间循环 */
 export function CloseConfirmDialog({
   language,
   onBackground,
   onQuit,
   onCancel,
 }: CloseConfirmDialogProps) {
-  const overlayRef = useRef<HTMLButtonElement>(null)
   const backgroundRef = useRef<HTMLButtonElement>(null)
+  const quitRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     backgroundRef.current?.focus()
   }, [])
 
-  // 焦点圈：首个可聚焦元素（遮罩）上的 Shift+Tab 与末个（主按钮）上的
-  // Tab 都收回来，不让焦点漏到弹窗背后的界面
-  const onOverlayKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
-    if (event.key === 'Tab' && event.shiftKey) {
-      event.preventDefault()
-      backgroundRef.current?.focus()
-    }
-  }
-  const onBackgroundKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
-    if (event.key === 'Tab' && !event.shiftKey) {
-      event.preventDefault()
-      overlayRef.current?.focus()
-    }
+  // 焦点圈只在两个真实按钮之间循环：全屏遮罩没有 focus 样式，若把它纳入
+  // 键盘循环，Chromium 的默认 :focus-visible 光圈会框住整个窗口。遮罩只
+  // 响应鼠标点击，键盘用户走 Esc 取消
+  const focusOtherButton = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key !== 'Tab') return
+    event.preventDefault()
+    const other = event.currentTarget === backgroundRef.current ? quitRef : backgroundRef
+    other.current?.focus()
   }
 
   return (
@@ -45,11 +40,9 @@ export function CloseConfirmDialog({
       className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(26,26,25,0.28)] px-6"
     >
       <button
-        ref={overlayRef}
         type="button"
         aria-label={t(language, 'cancel')}
         onClick={onCancel}
-        onKeyDown={onOverlayKeyDown}
         className="absolute inset-0 cursor-default"
       />
 
@@ -68,8 +61,10 @@ export function CloseConfirmDialog({
 
         <div className="flex items-center justify-end gap-2 px-[22px] py-4">
           <button
+            ref={quitRef}
             type="button"
             onClick={onQuit}
+            onKeyDown={focusOtherButton}
             className="rounded-[6px] border border-transparent px-3 py-[5px] text-[13px] text-ink-2 hover:bg-[#F4F4F0]"
           >
             {t(language, 'closeAskQuit')}
@@ -78,7 +73,7 @@ export function CloseConfirmDialog({
             ref={backgroundRef}
             type="button"
             onClick={onBackground}
-            onKeyDown={onBackgroundKeyDown}
+            onKeyDown={focusOtherButton}
             className="rounded-[6px] border border-ink bg-ink px-3 py-[5px] text-[13px] text-white hover:bg-[#333333]"
           >
             {t(language, 'closeAskBackground')}
