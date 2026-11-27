@@ -62,6 +62,11 @@ const strings = {
     safeCopy: '上一份副本完好',
     noticeFailed: '操作失败',
 
+    closeAskTitle: '关闭窗口后，要继续在后台备份吗？',
+    closeAskBody: '后台仍会自动备份，托盘图标随时可以打开窗口。',
+    closeAskBackground: '在后台运行',
+    closeAskQuit: '退出程序',
+
     errDestSameAsSource: '备份位置不能是源文件本身',
     errDestConflictsSource: '这个位置是另一个文件的原件，备份会把它覆盖',
     errDestConflictsDestination: '这个位置已经被另一个备份任务占用',
@@ -69,6 +74,8 @@ const strings = {
     errSourceNotFile: 'Anshin v0.1 只支持备份单个文件',
     errSourceMissing: '找不到源文件，可能已被移动或删除',
     errNoAccess: '没有权限读写这个位置，请检查文件和文件夹的权限',
+    errFileBusy:
+      '文件正被其他程序占用，或没有访问权限。请关闭占用它的程序，或检查文件和文件夹的权限后重试',
     errDiskFull: '目标磁盘空间不足',
   },
   en: {
@@ -133,6 +140,12 @@ const strings = {
     safeCopy: 'previous copy is intact',
     noticeFailed: 'Something went wrong',
 
+    closeAskTitle: 'Keep backing up in the background after the window closes?',
+    closeAskBody:
+      'Backups keep running automatically. Reopen the window any time from the tray icon.',
+    closeAskBackground: 'Run in the background',
+    closeAskQuit: 'Quit Anshin',
+
     errDestSameAsSource: 'The copy location cannot be the source file itself',
     errDestConflictsSource:
       'That location is the original of another file; backing up would overwrite it',
@@ -142,6 +155,8 @@ const strings = {
     errSourceMissing: 'Cannot find the source file; it may have been moved or deleted',
     errNoAccess:
       'No permission to read or write that location; check the file and folder permissions',
+    errFileBusy:
+      'That file is in use by another program, or access is denied. Close the program using it, or check the file and folder permissions, then try again',
     errDiskFull: 'The destination disk is full',
   },
 } as const
@@ -163,7 +178,11 @@ const engineErrorKeys: Record<EngineErrorCode, StringKey> = {
 const errnoKeys: Record<string, StringKey> = {
   ENOENT: 'errSourceMissing',
   EACCES: 'errNoAccess',
-  EPERM: 'errNoAccess',
+  // Windows 上 EPERM 最常见的原因不是权限，而是目标文件被占用（杀毒软件、
+  // Office 等锁住副本）；真权限问题（只读/ACL）也以 EPERM 出现，文案需
+  // 同时给出「关占用程序」与「查权限」两个补救方向
+  EPERM: 'errFileBusy',
+  EBUSY: 'errFileBusy',
   ENOSPC: 'errDiskFull',
 }
 
