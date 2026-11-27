@@ -1,4 +1,11 @@
-import type { BackupResult, EngineEvent, PickedSource, Settings, Source } from './types'
+import type {
+  BackupResult,
+  CloseChoice,
+  EngineEvent,
+  PickedSource,
+  Settings,
+  Source,
+} from './types'
 
 export interface AnshinApi {
   listSources(): Promise<Source[]>
@@ -17,4 +24,6 @@ export interface AnshinApi {
   updateSettings(patch: Partial<Settings>): Promise<Settings>
   onEvent(listener: (event: EngineEvent) => void): () => void
   onRequestSettings(listener: () => void): () => void
+  onRequestCloseChoice(listener: () => void): () => void
+  closeChoice(choice: CloseChoice): Promise<void>
 }

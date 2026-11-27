@@ -15,6 +15,8 @@ export const IPC = {
   updateSettings: 'settings:update',
   engineEvent: 'engine:event',
   requestSettings: 'ui:request-settings',
+  requestCloseChoice: 'ui:request-close-choice',
+  closeChoice: 'ui:close-choice',
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
