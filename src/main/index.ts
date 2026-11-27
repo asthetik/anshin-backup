@@ -1,10 +1,12 @@
 import { join } from 'node:path'
+import type { Event, Input, MessageBoxReturnValue } from 'electron'
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron'
 import log from 'electron-log/main'
 import { IPC } from '../shared/ipc'
 import { knownSettingsFields } from '../shared/settings'
 import type { CloseChoice, EngineEvent, Language, Settings } from '../shared/types'
 import { applyAutoStart } from './autostart'
+import { applyCloseChoice, createCloseChoiceGate } from './closeChoice'
 import { BackupEngine } from './engine'
 import { mainT } from './i18n'
 import { registerIpc } from './ipc'
@@ -107,9 +109,9 @@ function hideWindowToTray(window: BrowserWindow): void {
 // 首次赋值，Esc 走默认「保留」并记档）；Windows 把问题发到渲染进程，用与
 // 界面一致的弹窗问是否驻留后台（是→收起，否→退出，取消不算回答，下次再问）；
 // Linux 不打扰。之后关窗直接收起
-let closeChoicePending = false
-// Windows 界面内弹窗是否正等待回答；重复关窗时用来把问题带回前台
-let closeChoiceRequested = false
+// 关窗询问的两类「悬着」状态（原生弹框 / 界面内弹窗）收敛到一个门控对象，
+// 行为与原先的旗标一致；纯函数实现见 closeChoice.ts，tests/closeChoice.test.ts 钉住
+const closeChoiceGate = createCloseChoiceGate()
 
 function hideToTrayWithNotice(window: BrowserWindow): void {
   const settings = settingsStore?.get()
@@ -125,12 +127,13 @@ function hideToTrayWithNotice(window: BrowserWindow): void {
 
   if (process.platform === 'darwin') {
     // 反复点 X 只弹一次
-    if (closeChoicePending) return
-    closeChoicePending = true
+    if (closeChoiceGate.isNativePending()) return
+    closeChoiceGate.nativeOpened()
     const language = settings.language
 
-    void dialog
-      .showMessageBox(window, {
+    let box: Promise<MessageBoxReturnValue>
+    try {
+      box = dialog.showMessageBox(window, {
         type: 'question',
         message: mainT(language, 'dockChoiceTitle'),
         buttons: [mainT(language, 'dockChoiceKeep'), mainT(language, 'dockChoiceHide')],
@@ -138,19 +141,33 @@ function hideToTrayWithNotice(window: BrowserWindow): void {
         cancelId: 0,
         noLink: true,
       })
+    } catch (error) {
+      // 同步抛出（如原生弹框分配失败）时 promise 不会创建，.finally 无从
+      // 执行；就地复位旗标，关窗按钮与托盘设置入口不能从此卡死
+      closeChoiceGate.nativeOpenFailed()
+      log.error('弹出关窗询问失败', error)
+      return
+    }
+    void box
       .then((result) => {
         // 保留=0（默认/Esc）隐藏=1；选择即 hideDockOnClose 的首次赋值
-        settingsStore?.update({
-          closeNoticeAcknowledged: true,
-          hideDockOnClose: result.response === 1,
-        })
+        try {
+          settingsStore?.update({
+            closeNoticeAcknowledged: true,
+            hideDockOnClose: result.response === 1,
+          })
+        } catch (error) {
+          // 写盘失败（文件被占用/磁盘满）不能把用户的回答吞掉：照常驻留，
+          // 只是设置没落盘，下次启动还会再问一次（与 performCloseChoice 同一取舍）
+          log.error('记录关窗选择失败', error)
+        }
         if (!window.isDestroyed()) hideWindowToTray(window)
       })
       .catch(() => {
         // 弹框异常（如退出时窗口被销毁）按未回答处理：窗口留在原地，下次再问
       })
       .finally(() => {
-        closeChoicePending = false
+        closeChoiceGate.nativeSettled()
       })
     return
   }
@@ -167,24 +184,25 @@ function hideToTrayWithNotice(window: BrowserWindow): void {
 
   // 问题还悬着：窗口可能被最小化，或弹窗请求被尚未就绪的渲染进程错过。
   // 带回前台并重发一次请求（渲染侧 setCloseChoiceOpen(true) 幂等）
-  if (closeChoiceRequested) {
+  if (closeChoiceGate.isRequestOutstanding()) {
     if (window.isMinimized()) window.restore()
     window.focus()
     window.webContents.send(IPC.requestCloseChoice)
     return
   }
 
-  closeChoiceRequested = true
+  closeChoiceGate.requestSent()
   window.webContents.send(IPC.requestCloseChoice)
 }
 
 // 渲染进程不可用时的原生版关窗询问；回答走同一条 performCloseChoice
 function askCloseChoiceNatively(window: BrowserWindow, language: Language): void {
-  if (closeChoicePending) return
-  closeChoicePending = true
+  if (closeChoiceGate.isNativePending()) return
+  closeChoiceGate.nativeOpened()
 
-  void dialog
-    .showMessageBox(window, {
+  let box: Promise<MessageBoxReturnValue>
+  try {
+    box = dialog.showMessageBox(window, {
       type: 'question',
       message: mainT(language, 'closeAskTitle'),
       detail: mainT(language, 'closeAskBody'),
@@ -193,6 +211,13 @@ function askCloseChoiceNatively(window: BrowserWindow, language: Language): void
       cancelId: -1,
       noLink: true,
     })
+  } catch (error) {
+    // 同步抛出时 promise 不会创建，.finally 无从执行；就地复位旗标
+    closeChoiceGate.nativeOpenFailed()
+    log.error('弹出关窗询问失败', error)
+    return
+  }
+  void box
     .then((result) => {
       const choice: CloseChoice =
         result.response === 0 ? 'background' : result.response === 1 ? 'quit' : 'cancel'
@@ -202,30 +227,25 @@ function askCloseChoiceNatively(window: BrowserWindow, language: Language): void
       // 弹框异常（如退出时窗口被销毁）按未回答处理：窗口留在原地，下次再问
     })
     .finally(() => {
-      closeChoicePending = false
+      closeChoiceGate.nativeSettled()
     })
 }
 
 function performCloseChoice(choice: CloseChoice): void {
-  closeChoiceRequested = false
-  // IPC 传来的回答不可全信：未识别的值一律按「取消」处理，不能落到最重的「退出」
-  if (choice !== 'background' && choice !== 'quit') return
-
-  if (choice === 'quit') {
-    // 「退出」是一次性动作，不代表以后关窗的去向；不记档，下次启动首次关窗再问
-    isQuitting = true
-    app.quit()
-    return
-  }
-
-  try {
-    settingsStore?.update({ closeNoticeAcknowledged: true })
-  } catch (error) {
-    // 写盘失败（文件被占用/磁盘满）不能把用户的回答吞掉：照常驻留，
-    // 只是设置没落盘，下次启动还会再问一次
-    log.error('记录关窗选择失败', error)
-  }
-  if (mainWindow && !mainWindow.isDestroyed()) hideWindowToTray(mainWindow)
+  closeChoiceGate.requestAnswered()
+  // 分类与裁决在 closeChoice.ts：未识别的值一律按「取消」处理，绝不落到
+  // 「退出」；quit 是一次性动作不落档；写档失败不能吞掉回答，照常驻留
+  applyCloseChoice(choice, {
+    quit: () => {
+      isQuitting = true
+      app.quit()
+    },
+    acknowledge: () => settingsStore?.update({ closeNoticeAcknowledged: true }),
+    hide: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) hideWindowToTray(mainWindow)
+    },
+    onError: (error) => log.error('记录关窗选择失败', error),
+  })
 }
 
 function createWindow(): BrowserWindow {
@@ -255,34 +275,51 @@ function createWindow(): BrowserWindow {
   window.once('ready-to-show', () => window.show())
 
   // 菜单已移除，Windows/Linux 开发态没有 DevTools/刷新快捷键入口；补回
-  // F12 与 Ctrl+R（按住不放的自动重复不算新按键，带修饰键的组合也不响应）
+  // F12 与 Ctrl+R（按住不放的自动重复不算新按键，带修饰键的组合也不响应）。
+  // 用 input.code 而非 input.key：后者随键盘布局变化，非拉丁布局下会失灵
   if (!app.isPackaged) {
     window.webContents.on('before-input-event', (_event, input) => {
       if (input.type !== 'keyDown' || input.isAutoRepeat) return
       const plain = !input.alt && !input.control && !input.meta && !input.shift
-      if (plain && input.key === 'F12') {
+      if (plain && input.code === 'F12') {
         window.webContents.toggleDevTools()
         return
       }
-      if (
-        input.control &&
-        !input.alt &&
-        !input.meta &&
-        !input.shift &&
-        input.key.toLowerCase() === 'r'
-      ) {
+      if (input.control && !input.alt && !input.meta && !input.shift && input.code === 'KeyR') {
         window.webContents.reload()
       }
     })
-    // 焦点进了 DevTools 后页面侧收不到 F12，DevTools 自己补一个关闭入口
+    // 焦点进了 DevTools 后页面侧收不到 F12，DevTools 自己补一个关闭入口。
+    // devToolsWebContents 在开关之间复用，直接 on 会随开关次数叠加监听，
+    // 关闭时摘掉本次挂上的处理器
     window.webContents.on('devtools-opened', () => {
-      window.webContents.devToolsWebContents?.on('before-input-event', (_event, input) => {
+      const devTools = window.webContents.devToolsWebContents
+      if (!devTools) return
+      const closeOnF12 = (_event: Event, input: Input): void => {
         if (input.type !== 'keyDown' || input.isAutoRepeat) return
         const plain = !input.alt && !input.control && !input.meta && !input.shift
-        if (plain && input.key === 'F12') window.webContents.closeDevTools()
+        if (plain && input.code === 'F12') window.webContents.closeDevTools()
+      }
+      devTools.on('before-input-event', closeOnF12)
+      window.webContents.once('devtools-closed', () => {
+        devTools.removeListener('before-input-event', closeOnF12)
       })
     })
   }
+
+  // 渲染进程重载或崩溃后，界面内弹窗的状态随之丢失；作废「问题悬着」的
+  // 记号，托盘设置入口不再被陈旧旗标拦住，下次关窗会重新发问
+  window.webContents.on('did-finish-load', () => {
+    closeChoiceGate.rendererRecovered()
+  })
+  // 非退出流程中的渲染进程崩溃自动重载自愈：生产版没有刷新快捷键，
+  // 白屏窗口对非技术用户是死胡同（对抗审查与 Red Team 收敛指认）
+  window.webContents.on('render-process-gone', (_event, details) => {
+    closeChoiceGate.rendererRecovered()
+    if (!isQuitting && details.reason !== 'clean-exit') {
+      window.webContents.reloadIgnoringCache()
+    }
+  })
 
   window.on('close', (event) => {
     // 托盘可见才驻留；无托盘环境放行关闭，由 window-all-closed 负责退出
@@ -412,7 +449,8 @@ async function bootstrap(): Promise<void> {
       onOpenSettings: () => {
         showWindow()
         // 关窗问题还悬着时先答它，设置等下次再开，避免两个弹窗叠在一起
-        if (closeChoiceRequested) return
+        // （原生弹框与界面弹窗两类「悬着」都收在同一个门控对象里）
+        if (closeChoiceGate.isSettingsEntryBlocked()) return
         mainWindow?.webContents.send(IPC.requestSettings)
       },
       onQuit: () => {
